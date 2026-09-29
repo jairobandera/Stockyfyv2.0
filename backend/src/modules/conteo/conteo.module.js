@@ -14,6 +14,35 @@ function normalize(row) {
   return { ...row, activo: !!row.activo, conteoFinalizado: !!row.conteoFinalizado };
 }
 
+/**
+ * Agrega a cada conteo de tipo CATEGORIAS la lista de nombres de categorias
+ * efectivamente incluidas (derivadas de sus productos). Deja LIBRE sin cambios.
+ */
+async function attachCategorias(conteos) {
+  const categorizados = conteos.filter((c) => c.tipoConteo === 'CATEGORIAS');
+  if (categorizados.length === 0) return conteos;
+  const ids = categorizados.map((c) => c.id);
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = await query(
+    `SELECT DISTINCT cp.conteo_id AS conteoId, cat.nombre AS categoria
+       FROM conteo_producto cp
+       JOIN producto p  ON p.id  = cp.producto_id
+       JOIN categoria cat ON cat.id = p.categoria_id
+      WHERE cp.conteo_id IN (${placeholders})
+      ORDER BY cat.nombre`,
+    ids
+  );
+  const porConteo = new Map();
+  for (const r of rows) {
+    if (!porConteo.has(r.conteoId)) porConteo.set(r.conteoId, []);
+    porConteo.get(r.conteoId).push(r.categoria);
+  }
+  for (const c of conteos) {
+    if (c.tipoConteo === 'CATEGORIAS') c.categorias = porConteo.get(c.id) || [];
+  }
+  return conteos;
+}
+
 function mensaje(row) {
   return { id: row.id, fechaHora: row.fechaHora ? String(row.fechaHora) : null, tipoConteo: row.tipoConteo };
 }
@@ -23,11 +52,14 @@ function nowDateTime() {
 }
 
 export const conteoService = {
-  async getAllActive() { return (await query(`${SELECT} WHERE activo = 1`)).map(normalize); },
-  async getAllIncludingInactive() { return (await query(SELECT)).map(normalize); },
+  async getAllActive() { return attachCategorias((await query(`${SELECT} WHERE activo = 1`)).map(normalize)); },
+  async getAllIncludingInactive() { return attachCategorias((await query(SELECT)).map(normalize)); },
   async getById(id) {
     const r = await query(`${SELECT} WHERE id = ?`, [id]);
-    return normalize(r[0] || null);
+    const conteo = normalize(r[0] || null);
+    if (!conteo) return null;
+    const [enriquecido] = await attachCategorias([conteo]);
+    return enriquecido;
   },
   // Conteos finalizados dentro de un rango de fechas (inclusive). Formato: YYYY-MM-DD.
   async getFinalizadosEntre(desde, hasta) {
@@ -35,7 +67,7 @@ export const conteoService = {
     let where = 'WHERE conteo_finalizado = 1';
     if (desde) { where += ' AND fecha_hora >= ?'; params.push(`${desde} 00:00:00`); }
     if (hasta) { where += ' AND fecha_hora <= ?'; params.push(`${hasta} 23:59:59`); }
-    return (await query(`${SELECT} ${where} ORDER BY fecha_hora DESC`, params)).map(normalize);
+    return attachCategorias((await query(`${SELECT} ${where} ORDER BY fecha_hora DESC`, params)).map(normalize));
   },
 
   async create(dto) {

@@ -56,6 +56,16 @@ export function gestionarConteos() {
   const tipoBadge = (c) => badge(c.tipoConteo === 'CATEGORIAS' ? 'Categorías' : 'Libre',
     c.tipoConteo === 'CATEGORIAS' ? 'info' : 'primary');
 
+  // Igual que tipoBadge pero, en CATEGORIAS, agrega los nombres de las categorías contadas.
+  const tipoBadgeConCategorias = (c) => {
+    if (c.tipoConteo !== 'CATEGORIAS') return badge('Libre', 'primary');
+    const cats = (c.categorias && c.categorias.length) ? c.categorias.join(', ') : null;
+    return h('span', { class: 'd-inline-flex align-items-center gap-1 flex-wrap' }, [
+      badge('Categorías', 'info'),
+      cats ? h('span', { class: 'text-muted small' }, `- ${cats}`) : null,
+    ]);
+  };
+
   function renderActivos(rows) {
     return dataTable({
       columns: [
@@ -77,7 +87,7 @@ export function gestionarConteos() {
     return dataTable({
       columns: [
         { key: 'id', label: 'ID', render: (r) => `#${r.id}` },
-        { key: 'tipoConteo', label: 'Tipo', render: tipoBadge },
+        { key: 'tipoConteo', label: 'Tipo', render: tipoBadgeConCategorias },
         { key: 'fechaHora', label: 'Fecha', render: (r) => fmt.dateTime(r.fechaHora) },
       ],
       rows, searchKeys: ['id', 'tipoConteo'],

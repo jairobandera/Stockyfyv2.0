@@ -24,6 +24,7 @@ const NAV = {
     { icon: 'bi-box-seam', label: 'Productos', href: '#/admin/gestionar-productos' },
     { icon: 'bi-boxes', label: 'Lotes', href: '#/admin/gestionar-lotes' },
     { icon: 'bi-truck', label: 'Proveedores', href: '#/admin/gestionar-proveedores' },
+    { icon: 'bi-file-earmark-arrow-down', label: 'Plantillas', href: '#/admin/plantillas' },
     { section: 'Operacion' },
     { icon: 'bi-clipboard-check', label: 'Conteos', href: '#/admin/gestionar-conteos' },
     { icon: 'bi-clipboard-data', label: 'Conteos finalizados', href: '#/admin/conteos-finalizados' },

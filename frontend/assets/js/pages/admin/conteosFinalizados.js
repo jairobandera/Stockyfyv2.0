@@ -36,8 +36,14 @@ export function conteosFinalizados() {
   const resultWrap = h('div');
   content.append(filtros, resultWrap);
 
-  const tipoBadge = (c) => badge(c.tipoConteo === 'CATEGORIAS' ? 'Categorías' : 'Libre',
-    c.tipoConteo === 'CATEGORIAS' ? 'info' : 'primary');
+  const tipoBadge = (c) => {
+    if (c.tipoConteo !== 'CATEGORIAS') return badge('Libre', 'primary');
+    const cats = (c.categorias && c.categorias.length) ? c.categorias.join(', ') : null;
+    return h('span', { class: 'd-inline-flex align-items-center gap-1 flex-wrap' }, [
+      badge('Categorías', 'info'),
+      cats ? h('span', { class: 'text-muted small' }, `- ${cats}`) : null,
+    ]);
+  };
 
   async function buscar() {
     if (desde.value && hasta.value && desde.value > hasta.value) {

@@ -173,7 +173,9 @@ export const productoService = {
     const creados = [];
     const errores = [];
     for (const dto of productos) {
-      if (!dto.nombre || !dto.codigosBarra || dto.codigosBarra.length === 0 ||
+      // El codigo de barra es OPCIONAL al importar: no todos los productos lo traen
+      // (los que no lo tengan se cuentan manualmente, no se pueden escanear).
+      if (!dto.nombre ||
           dto.precio === undefined || dto.precio === null || dto.precio < 0 ||
           dto.cantidadStock === undefined || dto.cantidadStock === null || dto.cantidadStock < 0) {
         errores.push(dto.codigoProducto || 'Producto sin codigo - Datos faltantes o invalidos');
@@ -184,7 +186,7 @@ export const productoService = {
         await transaction(async (conn) => {
           const [dup] = await conn.execute(`SELECT id FROM producto WHERE codigo_producto = ?`, [dto.codigoProducto]);
           if (dup.length) throw badRequest(`${dto.codigoProducto} - Codigo de producto ya esta asignado`);
-          for (const barra of dto.codigosBarra) {
+          for (const barra of (dto.codigosBarra || [])) {
             const [owner] = await conn.execute(`SELECT producto_id FROM codigo_barra WHERE codigo = ?`, [barra]);
             if (owner.length) throw badRequest(`${dto.codigoProducto} - Codigo de barras ${barra} ya esta asignado a otro producto`);
           }

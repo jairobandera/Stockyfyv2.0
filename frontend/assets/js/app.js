@@ -14,6 +14,7 @@ import { verUsuarios, crearUsuario, editarUsuario } from './pages/superadmin/usu
 import { adminDashboard } from './pages/admin/dashboard.js';
 import { gestionarCategorias } from './pages/admin/categorias.js';
 import { gestionarProductos } from './pages/admin/productos.js';
+import { gestionarPlantillas } from './pages/admin/plantillas.js';
 import { gestionarLotes } from './pages/admin/lotes.js';
 import { gestionarProveedores } from './pages/admin/proveedores.js';
 import { gestionarEmpleados } from './pages/admin/empleados.js';
@@ -60,6 +61,7 @@ router.add('/superadmin/editar-usuario/:id', page(editarUsuario), { role: SA });
 router.add('/admin/dashboard', page(adminDashboard), { role: AD });
 router.add('/admin/gestionar-categorias', page(gestionarCategorias), { role: AD });
 router.add('/admin/gestionar-productos', page(gestionarProductos), { role: AD });
+router.add('/admin/plantillas', page(gestionarPlantillas), { role: AD });
 router.add('/admin/gestionar-lotes', page(gestionarLotes), { role: AD });
 router.add('/admin/gestionar-proveedores', page(gestionarProveedores), { role: AD });
 router.add('/admin/gestionar-empleados', page(gestionarEmpleados), { role: AD });

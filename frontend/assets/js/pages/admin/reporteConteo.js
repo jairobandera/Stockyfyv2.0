@@ -38,6 +38,7 @@ export async function reporteConteo({ params }) {
       };
     });
     const diferenciaMonetaria = dineroSobrante - dineroFaltante;
+    const tipoLabel = tipoConteoLabel(conteo);
 
     content.append(
       h('div', { class: 'd-flex justify-content-between align-items-center mb-3 flex-wrap gap-2' }, [
@@ -48,13 +49,14 @@ export async function reporteConteo({ params }) {
           outlineButton('Exportar PDF', 'bi-file-earmark-pdf', () => exportPdf(conteo, filas, { totalFaltante, totalSobrante, diferenciaMonetaria }), 'btn-outline-danger'),
         ]),
       ]),
-      h('div', { class: 'text-muted mb-3' }, `Conteo ${conteo?.tipoConteo === 'CATEGORIAS' ? 'por categorías' : 'libre'} · ${fmt.dateTime(conteo?.fechaHora)}`),
+      h('div', { class: 'text-muted mb-3' }, `Tipo: ${tipoLabel} · ${fmt.dateTime(conteo?.fechaHora)}`),
       h('div', { class: 'row g-3 mb-4' }, [
         col(statCard('Unidades faltantes', totalFaltante, 'bi-arrow-down-circle', '#dc2626')),
         col(statCard('Unidades sobrantes', totalSobrante, 'bi-arrow-up-circle', '#2563eb')),
         col(statCard('Diferencia monetaria', fmt.money(diferenciaMonetaria), 'bi-cash-stack', diferenciaMonetaria < 0 ? '#dc2626' : '#16a34a')),
       ]),
       buildTable(filas),
+      buildResumen({ totalFaltante, totalSobrante, diferenciaMonetaria }),
     );
   } catch (err) {
     loading.remove();
@@ -63,6 +65,32 @@ export async function reporteConteo({ params }) {
 }
 
 const col = (child) => h('div', { class: 'col-12 col-md-4' }, child);
+
+/** Etiqueta de tipo: "Por categorías - Cat1, Cat2" o "Libre". */
+function tipoConteoLabel(conteo) {
+  if (conteo?.tipoConteo !== 'CATEGORIAS') return 'Libre';
+  const cats = (conteo.categorias && conteo.categorias.length) ? conteo.categorias.join(', ') : null;
+  return cats ? `Por categorías - ${cats}` : 'Por categorías';
+}
+
+/** Panel de resumen al final del reporte. La diferencia monetaria va en rojo/verde. */
+function buildResumen({ totalFaltante, totalSobrante, diferenciaMonetaria }) {
+  const positivo = diferenciaMonetaria >= 0;
+  const color = positivo ? '#16a34a' : '#dc2626';
+  const item = (label, value, valueColor) => h('div', { class: 'd-flex justify-content-between align-items-center py-2 border-bottom' }, [
+    h('span', { class: 'text-muted' }, label),
+    h('span', { class: 'fw-semibold fs-5', style: valueColor ? { color: valueColor } : {} }, value),
+  ]);
+  return h('div', { class: 'sk-card p-4 mt-4' }, [
+    h('h5', { class: 'mb-3' }, [h('i', { class: 'bi bi-clipboard-check me-2' }), 'Resumen del conteo']),
+    item('Unidades faltantes', String(totalFaltante), '#dc2626'),
+    item('Unidades sobrantes', String(totalSobrante), '#2563eb'),
+    h('div', { class: 'd-flex justify-content-between align-items-center pt-3' }, [
+      h('span', { class: 'fw-semibold' }, 'Diferencia monetaria (saldo)'),
+      h('span', { class: 'fw-bold', style: { color, fontSize: '1.5rem' } }, fmt.money(diferenciaMonetaria)),
+    ]),
+  ]);
+}
 
 function buildTable(filas) {
   const body = filas.map((f) => {
@@ -103,7 +131,7 @@ function exportPdf(conteo, filas, totales) {
   doc.setFontSize(16);
   doc.text(`Reporte de conteo #${conteo?.id ?? ''}`, 14, 18);
   doc.setFontSize(10);
-  doc.text(`Tipo: ${conteo?.tipoConteo === 'CATEGORIAS' ? 'Por categorías' : 'Libre'}`, 14, 26);
+  doc.text(`Tipo: ${tipoConteoLabel(conteo)}`, 14, 26);
   doc.text(`Fecha: ${fmt.dateTime(conteo?.fechaHora)}`, 14, 32);
   doc.autoTable({
     startY: 38,
@@ -113,9 +141,15 @@ function exportPdf(conteo, filas, totales) {
     headStyles: { fillColor: [37, 99, 235] },
   });
   const y = doc.lastAutoTable.finalY + 8;
+  doc.setFontSize(12);
+  doc.text('Resumen del conteo', 14, y);
   doc.setFontSize(11);
-  doc.text(`Unidades faltantes: ${totales.totalFaltante}`, 14, y);
-  doc.text(`Unidades sobrantes: ${totales.totalSobrante}`, 14, y + 6);
-  doc.text(`Diferencia monetaria: ${fmt.money(totales.diferenciaMonetaria)}`, 14, y + 12);
+  doc.setTextColor(0, 0, 0);
+  doc.text(`Unidades faltantes: ${totales.totalFaltante}`, 14, y + 7);
+  doc.text(`Unidades sobrantes: ${totales.totalSobrante}`, 14, y + 13);
+  if (totales.diferenciaMonetaria < 0) doc.setTextColor(220, 38, 38);
+  else doc.setTextColor(22, 163, 74);
+  doc.text(`Diferencia monetaria (saldo): ${fmt.money(totales.diferenciaMonetaria)}`, 14, y + 19);
+  doc.setTextColor(0, 0, 0);
   doc.save(`reporte-conteo-${conteo?.id ?? ''}.pdf`);
 }

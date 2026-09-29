@@ -3,6 +3,7 @@
 // - manualSearch(productos): busca por codigo, codigo de barra o nombre (con seleccion multiple).
 // - askCantidad({...}): popup con datos del producto + input de cantidad contada.
 import { ui } from '../core/ui.js';
+import { h, clear } from '../core/dom.js';
 
 const Swal = window.Swal;
 
@@ -98,8 +99,7 @@ function pickProducto(matches) {
   const html = '<div class="list-group text-start">' + matches.map((p, i) =>
     `<button type="button" class="list-group-item list-group-item-action" data-i="${i}">
        <div class="fw-semibold">${escapeHtml(p.nombre)}</div>
-       <small class="text-muted">Cód: ${escapeHtml(p.codigoProducto)}${
-         (p.codigosBarra && p.codigosBarra.length) ? ' · Barra: ' + escapeHtml(p.codigosBarra.join(', ')) : ''}</small>
+       <small class="text-muted">Cód: ${escapeHtml(p.codigoProducto)}</small>
      </button>`).join('') + '</div>';
 
   return new Promise((resolve) => {
@@ -201,4 +201,167 @@ export async function askCantidad({ producto, esperada, nota }) {
     },
   });
   return isConfirmed ? value : null;
+}
+
+/**
+ * Modal persistente de "conteo guiado": muestra un producto sin contar a la vez,
+ * y al registrar avanza automaticamente al siguiente sin cerrarse.
+ *
+ * @param {object} handlers
+ * @param {function(number=):({producto:object,esperada:number}|null)} handlers.obtenerSiguiente
+ *        Devuelve el proximo producto sin contar (opcionalmente excluyendo un productoId), o null.
+ * @param {function(object,number):Promise} handlers.registrar  Registra (producto, cantidad).
+ * @param {function():number} [handlers.restante]  Cantidad de productos sin contar.
+ * @returns {{ cerrar:function, notificarContado:function(number,boolean) }}
+ */
+export function iniciarConteoGuiado({ obtenerSiguiente, registrar, restante, onCerrar }) {
+  let cerrado = false;
+  let actual = null;      // { producto, esperada }
+  let registrando = false;
+  const omitidos = new Set(); // ids de producto salteados en esta sesion del modal
+
+  const bodyWrap = h('div', { class: 'p-3' });
+  const closeBtn = h('button', {
+    class: 'btn-close', 'aria-label': 'Cerrar', onClick: () => cerrar(),
+  });
+  const restanteEl = h('span', { class: 'text-muted small' });
+  const header = h('div', { class: 'd-flex align-items-center justify-content-between px-3 pt-3' }, [
+    h('div', { class: 'd-flex align-items-center gap-2' }, [
+      h('i', { class: 'bi bi-lightning-charge-fill text-warning' }),
+      h('h5', { class: 'mb-0' }, 'Conteo guiado'),
+    ]),
+    h('div', { class: 'd-flex align-items-center gap-2' }, [restanteEl, closeBtn]),
+  ]);
+
+  const card = h('div', {
+    style: {
+      background: '#fff', borderRadius: '1rem', width: 'min(440px, 94vw)',
+      boxShadow: '0 10px 40px rgba(0,0,0,.25)', overflow: 'hidden',
+    },
+    onClick: (e) => e.stopPropagation(),
+  }, [header, bodyWrap]);
+
+  const overlay = h('div', {
+    style: {
+      position: 'fixed', inset: '0', background: 'rgba(15,23,42,.55)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: '2000',
+    },
+  }, [card]);
+
+  function onKey(e) { if (e.key === 'Escape') cerrar(); }
+
+  function cerrar() {
+    if (cerrado) return;
+    cerrado = true;
+    document.removeEventListener('keydown', onKey);
+    overlay.remove();
+    if (typeof onCerrar === 'function') onCerrar();
+  }
+
+  function actualizarRestante() {
+    if (typeof restante === 'function') {
+      const n = restante();
+      restanteEl.textContent = n > 0 ? `${n} sin contar` : '';
+    }
+  }
+
+  function renderFin() {
+    actual = null;
+    clear(bodyWrap);
+    bodyWrap.append(
+      h('div', { class: 'text-center py-4' }, [
+        h('i', { class: 'bi bi-check2-circle text-success', style: { fontSize: '2.5rem' } }),
+        h('p', { class: 'mt-2 mb-3' }, '¡No quedan productos sin contar!'),
+        h('button', { class: 'btn btn-primary', onClick: () => cerrar() }, 'Cerrar'),
+      ])
+    );
+    actualizarRestante();
+  }
+
+  function renderItem(item) {
+    actual = item;
+    const { producto, esperada } = item;
+    clear(bodyWrap);
+
+    const input = h('input', {
+      id: 'sk-guiado-qty', type: 'number', min: 0, class: 'form-control form-control-lg text-center',
+      placeholder: 'Cantidad contada',
+    });
+    const regBtn = h('button', { class: 'btn btn-primary btn-lg w-100' },
+      [h('i', { class: 'bi bi-check-lg me-1' }), 'Registrar y siguiente']);
+    const skipBtn = h('button', { class: 'btn btn-outline-secondary w-100' },
+      [h('i', { class: 'bi bi-skip-forward me-1' }), 'No contar, siguiente']);
+
+    async function registrarActual() {
+      if (registrando || !actual) return;
+      const v = input.value;
+      if (v === '' || Number(v) < 0 || Number.isNaN(Number(v))) {
+        input.classList.add('is-invalid');
+        input.focus();
+        return;
+      }
+      registrando = true; regBtn.disabled = true; skipBtn.disabled = true; closeBtn.disabled = true;
+      let ok;
+      try {
+        ok = await registrar(producto, Number(v));
+      } catch (err) {
+        registrando = false; regBtn.disabled = false; skipBtn.disabled = false; closeBtn.disabled = false;
+        ui.error(err.message);
+        return;
+      }
+      registrando = false; skipBtn.disabled = false; closeBtn.disabled = false;
+      if (ok === false) { regBtn.disabled = false; return; } // fallo (ya reportado): no avanzar
+      if (cerrado) return;
+      cargarSiguiente();
+    }
+
+    function omitirActual() {
+      if (registrando || !actual) return;
+      omitidos.add(Number(producto.id));
+      cargarSiguiente();
+    }
+
+    input.addEventListener('input', () => input.classList.remove('is-invalid'));
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); registrarActual(); } });
+    regBtn.addEventListener('click', registrarActual);
+    skipBtn.addEventListener('click', omitirActual);
+
+    bodyWrap.append(
+      h('h4', { class: 'mb-1' }, producto.nombre),
+      h('div', { class: 'text-muted small mb-3' }, `Código: ${producto.codigoProducto}`),
+      h('div', { class: 'sk-card p-2 mb-3 text-center bg-light' }, [
+        h('div', { class: 'small text-muted' }, 'Cantidad esperada'),
+        h('div', { class: 'fs-4 fw-semibold' }, String(esperada)),
+      ]),
+      input,
+      h('div', { class: 'mt-3 d-flex flex-column gap-2' }, [regBtn, skipBtn]),
+    );
+    actualizarRestante();
+    setTimeout(() => input.focus(), 30);
+  }
+
+  function cargarSiguiente() {
+    let item = obtenerSiguiente(omitidos);
+    // Si solo quedan salteados por mí, reciclarlos (probablemente otro ya contó algunos).
+    if (!item && omitidos.size > 0) { omitidos.clear(); item = obtenerSiguiente(omitidos); }
+    if (!item) { renderFin(); return; }
+    renderItem(item);
+  }
+
+  document.addEventListener('keydown', onKey);
+  document.body.append(overlay);
+  cargarSiguiente();
+
+  return {
+    cerrar,
+    /** Aviso externo (tiempo real): si el producto mostrado fue contado por otro, avanza. */
+    notificarContado(productoId, contadoPorOtro) {
+      if (cerrado) { return; }
+      actualizarRestante();
+      if (actual && contadoPorOtro && Number(actual.producto.id) === Number(productoId)) {
+        ui.toast('Otro participante contó este producto. Pasando al siguiente.', 'info');
+        cargarSiguiente();
+      }
+    },
+  };
 }

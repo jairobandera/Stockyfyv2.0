@@ -8,7 +8,7 @@ import { router } from '../../core/router.js';
 import { renderShell } from '../../core/layout.js';
 import { onCleanup } from '../../core/lifecycle.js';
 import { spinner, badge } from '../../components/page.js';
-import { scanBarcode, manualSearch, findByCode, askCantidad } from '../../components/barcode.js';
+import { scanBarcode, manualSearch, findByCode, askCantidad, iniciarConteoGuiado } from '../../components/barcode.js';
 import { resolveUsuarioId } from './session.js';
 
 export async function conteoView({ conteoId, backHref }) {
@@ -24,6 +24,7 @@ export async function conteoView({ conteoId, backHref }) {
   const rowByProducto = new Map();    // productoId -> conteoProductoId
   const participantsById = new Map(); // usuarioId -> nombre a mostrar
   let myUsuarioId = null;
+  let guiadoRef = null; // controlador del modal de conteo guiado (si esta abierto)
 
   let conteo;
   try {
@@ -138,9 +139,15 @@ export async function conteoView({ conteoId, backHref }) {
       if (!payload || payload.conteoId !== conteoId) return;
       registerRow(payload);
       renderRows(tbody);
+      // Avisar al conteo guiado: si otro participante contó el item mostrado, avanzar.
+      if (guiadoRef) {
+        const contadoPorOtro = payload.cantidadContada != null && Number(payload.usuarioId) !== Number(myUsuarioId);
+        guiadoRef.notificarContado(payload.productoId, contadoPorOtro);
+      }
     });
     const unsub2 = ws.subscribe('conteo-finalizado', (payload) => {
       if (payload && Number(payload.id) === conteoId) {
+        if (guiadoRef) guiadoRef.cerrar();
         ui.info('Conteo finalizado', 'El conteo fue finalizado.');
         router.navigate(backHref);
       }
@@ -150,10 +157,10 @@ export async function conteoView({ conteoId, backHref }) {
       const d = document.getElementById('ws-dot');
       if (d) d.className = 'sk-dot ' + (ws.isConnected() ? 'on' : 'off');
     }, 1500);
-    onCleanup(() => { unsub1(); unsub2(); clearInterval(partTimer); clearInterval(dotTimer); });
+    onCleanup(() => { unsub1(); unsub2(); clearInterval(partTimer); clearInterval(dotTimer); if (guiadoRef) guiadoRef.cerrar(); });
   }
 
-  const esCategorias = () => conteo.tipoConteo === 'CATEGORIAS';
+  function esCategorias() { return conteo.tipoConteo === 'CATEGORIAS'; }
 
   // Productos sobre los que se puede buscar/scanear.
   // CATEGORIAS: solo los que ya forman parte del conteo. LIBRE: todos los activos.
@@ -174,6 +181,31 @@ export async function conteoView({ conteoId, backHref }) {
     await abrirRegistro(producto);
   }
 
+  // Renglones sin contar (para CATEGORIAS): parte del conteo, con producto conocido y sin cantidad.
+  function renglonesSinContar(excludeProductoId) {
+    return [...rowsById.values()].filter((cp) =>
+      cp.cantidadContada == null &&
+      cp.productoId != null &&
+      productosById.has(cp.productoId) &&
+      Number(cp.productoId) !== Number(excludeProductoId));
+  }
+
+  // Elige un producto sin contar (aleatorio, para repartir entre usuarios y evitar choques).
+  // `excluir` puede ser un id único o un Set/array de ids a excluir (productos salteados).
+  function proximoSinContar(excluir) {
+    const excl = excluir instanceof Set
+      ? excluir
+      : new Set((Array.isArray(excluir) ? excluir : (excluir != null ? [excluir] : [])).map(Number));
+    const candidatos = [...rowsById.values()].filter((cp) =>
+      cp.cantidadContada == null && cp.productoId != null &&
+      productosById.has(cp.productoId) && !excl.has(Number(cp.productoId)));
+    if (candidatos.length === 0) return null;
+    const cp = candidatos[Math.floor(Math.random() * candidatos.length)];
+    const producto = productosById.get(cp.productoId);
+    const esperada = cp.cantidadEsperada ?? Number(producto.cantidadStock) ?? 0;
+    return { producto, esperada };
+  }
+
   function buildAddCard() {
     const scanBtn = h('button', { class: 'btn btn-primary btn-lg flex-fill py-3 d-flex align-items-center justify-content-center gap-2' },
       [h('i', { class: 'bi bi-upc-scan', style: { fontSize: '1.4rem' } }), 'Escanear código de barra']);
@@ -192,8 +224,30 @@ export async function conteoView({ conteoId, backHref }) {
       await abrirRegistro(producto);
     });
 
+    const botones = [h('div', { class: 'd-flex flex-column flex-sm-row gap-2' }, [scanBtn, manualBtn])];
+
+    // Conteo guiado: solo para CATEGORIAS (hay un conjunto conocido de productos esperados).
+    if (esCategorias()) {
+      const guiadoBtn = h('button', { class: 'btn btn-warning btn-lg w-100 py-3 d-flex align-items-center justify-content-center gap-2' },
+        [h('i', { class: 'bi bi-lightning-charge-fill', style: { fontSize: '1.3rem' } }), 'Conteo guiado']);
+      guiadoBtn.addEventListener('click', () => {
+        if (guiadoRef) return; // ya abierto
+        if (renglonesSinContar().length === 0) {
+          ui.info('Conteo guiado', 'No quedan productos sin contar.');
+          return;
+        }
+        guiadoRef = iniciarConteoGuiado({
+          obtenerSiguiente: (excluir) => proximoSinContar(excluir),
+          registrar: (producto, cantidad) => registrarConteo(producto, cantidad),
+          restante: () => renglonesSinContar().length,
+          onCerrar: () => { guiadoRef = null; },
+        });
+      });
+      botones.push(guiadoBtn);
+    }
+
     return h('div', { class: 'sk-card p-3 mb-3' }, [
-      h('div', { class: 'd-flex flex-column flex-sm-row gap-2' }, [scanBtn, manualBtn]),
+      h('div', { class: 'd-flex flex-column gap-2' }, botones),
     ]);
   }
 
@@ -231,7 +285,8 @@ export async function conteoView({ conteoId, backHref }) {
       }
       renderRows(window.__conteoTbody);
       ui.success('Registrado.');
-    } catch (err) { ui.error(err.message); }
+      return true;
+    } catch (err) { ui.error(err.message); return false; }
   }
 
   function renderRows(tbody) {
