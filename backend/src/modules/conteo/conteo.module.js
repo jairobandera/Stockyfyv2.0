@@ -1,0 +1,157 @@
+import { query, transaction } from '../../config/db.js';
+import { Router } from '../../core/router.js';
+import { sendJson, sendNoContent } from '../../core/http.js';
+import { badRequest, notFound } from '../../core/httpError.js';
+import { publish } from '../../core/ws.js';
+
+const SELECT = `
+  SELECT id, fecha_hora AS fechaHora, conteo_finalizado AS conteoFinalizado,
+         usuario_id AS usuarioId, activo, tipo_conteo AS tipoConteo
+  FROM conteo`;
+
+function normalize(row) {
+  if (!row) return row;
+  return { ...row, activo: !!row.activo, conteoFinalizado: !!row.conteoFinalizado };
+}
+
+function mensaje(row) {
+  return { id: row.id, fechaHora: row.fechaHora ? String(row.fechaHora) : null, tipoConteo: row.tipoConteo };
+}
+
+function nowDateTime() {
+  return new Date().toISOString().slice(0, 19).replace('T', ' ');
+}
+
+export const conteoService = {
+  async getAllActive() { return (await query(`${SELECT} WHERE activo = 1`)).map(normalize); },
+  async getAllIncludingInactive() { return (await query(SELECT)).map(normalize); },
+  async getById(id) {
+    const r = await query(`${SELECT} WHERE id = ?`, [id]);
+    return normalize(r[0] || null);
+  },
+  // Conteos finalizados dentro de un rango de fechas (inclusive). Formato: YYYY-MM-DD.
+  async getFinalizadosEntre(desde, hasta) {
+    const params = [];
+    let where = 'WHERE conteo_finalizado = 1';
+    if (desde) { where += ' AND fecha_hora >= ?'; params.push(`${desde} 00:00:00`); }
+    if (hasta) { where += ' AND fecha_hora <= ?'; params.push(`${hasta} 23:59:59`); }
+    return (await query(`${SELECT} ${where} ORDER BY fecha_hora DESC`, params)).map(normalize);
+  },
+
+  async create(dto) {
+    const tipo = dto.tipoConteo || 'LIBRE';
+    if (!['LIBRE', 'CATEGORIAS'].includes(tipo)) throw badRequest(`Tipo de conteo invalido: ${tipo}`);
+    const finalizado = !!dto.conteoFinalizado;
+    const fechaHora = dto.fechaHora || nowDateTime();
+
+    const id = await transaction(async (conn) => {
+      const [res] = await conn.execute(
+        `INSERT INTO conteo (fecha_hora, conteo_finalizado, usuario_id, activo, tipo_conteo)
+         VALUES (?,?,?,?,?)`,
+        [fechaHora, finalizado ? 1 : 0, dto.usuarioId ?? null, finalizado ? 0 : 1, tipo]
+      );
+      const conteoId = res.insertId;
+
+      if (tipo === 'CATEGORIAS') {
+        if (!dto.usuarioId) throw badRequest('UsuarioId es requerido para conteos de tipo CATEGORIAS');
+        if (!dto.categoriaIds || dto.categoriaIds.length === 0) {
+          throw badRequest('Debe seleccionar al menos una categoria para conteos de tipo CATEGORIAS');
+        }
+        const [users] = await conn.execute(`SELECT sucursal_id FROM usuario WHERE id = ?`, [dto.usuarioId]);
+        if (!users.length) throw notFound(`Usuario no encontrado con id: ${dto.usuarioId}`);
+        const sucursalId = users[0].sucursal_id;
+
+        const inClause = dto.categoriaIds.map(() => '?').join(',');
+        const [categorias] = await conn.execute(
+          `SELECT id FROM categoria WHERE id IN (${inClause}) AND activo = 1 AND sucursal_id = ?`,
+          [...dto.categoriaIds, sucursalId]
+        );
+        if (!categorias.length) throw badRequest('No se encontraron categorias validas para la sucursal');
+
+        for (const cat of categorias) {
+          const [productos] = await conn.execute(
+            `SELECT id, precio, cantidad_stock FROM producto WHERE categoria_id = ? AND activo = 1`,
+            [cat.id]
+          );
+          for (const p of productos) {
+            await conn.execute(
+              `INSERT INTO conteo_producto (precio_actual, cantidad_esperada, cantidad_contada, conteo_id, producto_id, activo)
+               VALUES (?,?,?,?,?,1)`,
+              [p.precio, Number(p.cantidad_stock), null, conteoId, p.id]
+            );
+          }
+        }
+      }
+      return conteoId;
+    });
+
+    const saved = await this.getById(id);
+    publish('conteo-activo', mensaje(saved));
+    return saved;
+  },
+
+  async update(id, dto) {
+    const existing = (await query(`${SELECT} WHERE id = ?`, [id]))[0];
+    if (!existing) return null;
+    const sets = [];
+    const params = [];
+    if (dto.fechaHora !== undefined) { sets.push('fecha_hora = ?'); params.push(dto.fechaHora); }
+    if (dto.usuarioId !== undefined) { sets.push('usuario_id = ?'); params.push(dto.usuarioId); }
+    if (dto.tipoConteo !== undefined) {
+      if (!['LIBRE', 'CATEGORIAS'].includes(dto.tipoConteo)) throw badRequest(`Tipo de conteo invalido: ${dto.tipoConteo}`);
+      sets.push('tipo_conteo = ?'); params.push(dto.tipoConteo);
+    }
+    if (dto.conteoFinalizado !== undefined && dto.conteoFinalizado !== null) {
+      const fin = !!dto.conteoFinalizado;
+      sets.push('conteo_finalizado = ?'); params.push(fin ? 1 : 0);
+      sets.push('activo = ?'); params.push(fin ? 0 : 1);
+    }
+    if (sets.length) await query(`UPDATE conteo SET ${sets.join(', ')} WHERE id = ?`, [...params, id]);
+
+    const updated = await this.getById(id);
+    if (updated.conteoFinalizado) publish('conteo-finalizado', mensaje(updated));
+    else publish('conteo-activo', mensaje(updated));
+    return updated;
+  },
+
+  async deactivate(id) {
+    const existing = (await query(`${SELECT} WHERE id = ?`, [id]))[0];
+    if (!existing) throw notFound(`Conteo no encontrado con id: ${id}`);
+    await query(`UPDATE conteo SET activo = 0 WHERE id = ?`, [id]);
+    publish('conteo-finalizado', { id: Number(id), fechaHora: nowDateTime() });
+  },
+};
+
+export const conteoRoutes = new Router();
+conteoRoutes.get('/', async (ctx, res) => sendJson(res, 200, await conteoService.getAllActive()));
+conteoRoutes.get('/all', async (ctx, res) => sendJson(res, 200, await conteoService.getAllIncludingInactive()));
+
+conteoRoutes.post('/categorias', async (ctx, res) => {
+  if (ctx.body.tipoConteo !== 'CATEGORIAS') throw badRequest('Este endpoint solo acepta conteos de tipo CATEGORIAS');
+  sendJson(res, 201, await conteoService.create(ctx.body));
+});
+
+// Debe ir ANTES de /:id (misma cantidad de segmentos).
+conteoRoutes.get('/finalizados', async (ctx, res) =>
+  sendJson(res, 200, await conteoService.getFinalizadosEntre(ctx.query.desde, ctx.query.hasta)));
+
+conteoRoutes.get('/:id', async (ctx, res) => {
+  const c = await conteoService.getById(ctx.params.id);
+  c ? sendJson(res, 200, c) : sendJson(res, 404, null);
+});
+
+conteoRoutes.post('/', async (ctx, res) => {
+  const tipo = ctx.body.tipoConteo;
+  if (!tipo || tipo !== 'LIBRE') throw badRequest('Este endpoint solo acepta conteos de tipo LIBRE');
+  sendJson(res, 201, await conteoService.create(ctx.body));
+});
+
+conteoRoutes.put('/:id', async (ctx, res) => {
+  const updated = await conteoService.update(ctx.params.id, ctx.body);
+  updated ? sendJson(res, 200, updated) : sendJson(res, 404, null);
+});
+
+conteoRoutes.delete('/:id', async (ctx, res) => {
+  await conteoService.deactivate(ctx.params.id);
+  sendNoContent(res);
+});
