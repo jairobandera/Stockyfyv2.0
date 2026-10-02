@@ -15,6 +15,27 @@ function normalize(row) {
   return { ...row, activo: !!row.activo, precioActual: row.precioActual === null ? null : Number(row.precioActual) };
 }
 
+/**
+ * Un renglon solo puede sumar un producto de la misma sucursal que el conteo.
+ * Sin esto se puede inyectar en un conteo ajeno un producto de la propia sucursal.
+ */
+async function validarPertenencia(conteoId, productoId) {
+  if (!conteoId) throw badRequest('conteoId es requerido');
+  if (!productoId) throw badRequest('productoId es requerido');
+  const conteo = (await query(
+    `SELECT id, sucursal_id AS sucursalId, activo FROM conteo WHERE id = ?`, [conteoId]
+  ))[0];
+  if (!conteo) throw notFound(`Conteo no encontrado: ${conteoId}`);
+  if (!conteo.activo) throw badRequest('El conteo ya no esta activo');
+  const producto = (await query(
+    `SELECT id, sucursal_id AS sucursalId FROM producto WHERE id = ?`, [productoId]
+  ))[0];
+  if (!producto) throw notFound(`Producto no encontrado: ${productoId}`);
+  if (conteo.sucursalId && Number(producto.sucursalId) !== Number(conteo.sucursalId)) {
+    throw badRequest('El producto es de otra sucursal que la del conteo');
+  }
+}
+
 export const conteoProductoService = {
   async getAllActive() { return (await query(`${SELECT} WHERE activo = 1`)).map(normalize); },
   async getAllIncludingInactive() { return (await query(SELECT)).map(normalize); },
@@ -26,6 +47,7 @@ export const conteoProductoService = {
     return (await query(`${SELECT} WHERE conteo_id = ?`, [conteoId])).map(normalize);
   },
   async create(dto) {
+    await validarPertenencia(dto.conteoId, dto.productoId);
     const res = await query(
       `INSERT INTO conteo_producto (precio_actual, cantidad_esperada, cantidad_contada, conteo_id, producto_id, usuario_id, activo)
        VALUES (?,?,?,?,?,?,1)`,

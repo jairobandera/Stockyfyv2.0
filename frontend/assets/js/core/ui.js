@@ -37,8 +37,14 @@ export const fmt = {
   number(value) { return Number(value || 0).toLocaleString('es-UY'); },
   date(value) {
     if (!value) return '-';
-    const d = new Date(String(value).replace(' ', 'T'));
-    if (isNaN(d)) return String(value);
+    const texto = String(value);
+    // "YYYY-MM-DD" a secas lo interpreta el navegador como UTC y, al mostrarlo en
+    // hora local (UTC-3), caia un dia antes. Se arma como fecha local.
+    const soloFecha = /^(\d{4})-(\d{2})-(\d{2})$/.exec(texto);
+    const d = soloFecha
+      ? new Date(Number(soloFecha[1]), Number(soloFecha[2]) - 1, Number(soloFecha[3]))
+      : new Date(texto.replace(' ', 'T'));
+    if (isNaN(d)) return texto;
     return d.toLocaleDateString('es-UY');
   },
   dateTime(value) {

@@ -4,7 +4,8 @@ import { buildSet } from '../../core/sql.js';
 // Columnas expuestas (nunca devolvemos la contrasenia hasheada).
 const SELECT = `
   SELECT id, nombre, apellido, nombre_usuario AS nombreUsuario, rol,
-         sucursal_id AS sucursalId, activo
+         sucursal_id AS sucursalId,
+         cuenta_en_cualquier_sucursal AS cuentaEnCualquierSucursal, activo
   FROM usuario`;
 
 export const usuarioRepository = {
@@ -29,7 +30,8 @@ export const usuarioRepository = {
   async findByNombreUsuarioRaw(nombreUsuario) {
     const rows = await query(
       `SELECT id, nombre, apellido, nombre_usuario AS nombreUsuario, contrasenia, rol,
-              sucursal_id AS sucursalId, activo
+              sucursal_id AS sucursalId,
+              cuenta_en_cualquier_sucursal AS cuentaEnCualquierSucursal, activo
        FROM usuario WHERE nombre_usuario = ?`,
       [nombreUsuario]
     );
@@ -37,9 +39,11 @@ export const usuarioRepository = {
   },
   async insert(data) {
     const res = await query(
-      `INSERT INTO usuario (nombre, apellido, nombre_usuario, contrasenia, rol, sucursal_id, activo)
-       VALUES (?,?,?,?,?,?,1)`,
-      [data.nombre, data.apellido, data.nombreUsuario, data.contrasenia, data.rol, data.sucursalId]
+      `INSERT INTO usuario (nombre, apellido, nombre_usuario, contrasenia, rol, sucursal_id,
+                            cuenta_en_cualquier_sucursal, activo)
+       VALUES (?,?,?,?,?,?,?,1)`,
+      [data.nombre, data.apellido, data.nombreUsuario, data.contrasenia, data.rol, data.sucursalId,
+       data.cuentaEnCualquierSucursal ? 1 : 0]
     );
     return this.findById(res.insertId);
   },

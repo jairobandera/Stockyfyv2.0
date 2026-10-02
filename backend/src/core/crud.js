@@ -10,8 +10,9 @@ import { notFound } from './httpError.js';
  * @param {object} cfg
  * @param {string} cfg.table            Nombre de la tabla.
  * @param {string} cfg.entityLabel      Nombre legible para mensajes de error.
- * @param {Array<{col:string, field:string, bool?:boolean}>} cfg.fields
+ * @param {Array<{col:string, field:string, bool?:boolean, default?:any}>} cfg.fields
  *        Campos mapeables (columna <-> propiedad DTO). No incluir id ni activo.
+ *        `default` se usa en el alta cuando el DTO no trae el campo (columnas NOT NULL).
  */
 export function createCrud(cfg) {
   const { table, entityLabel, fields } = cfg;
@@ -44,7 +45,7 @@ export function createCrud(cfg) {
     async insert(dto) {
       const cols = fields.map((f) => `\`${f.col}\``).join(', ');
       const placeholders = fields.map(() => '?').join(', ');
-      const values = fields.map((f) => coerce(f, dto[f.field]));
+      const values = fields.map((f) => coerce(f, dto[f.field] ?? f.default));
       const res = await query(
         `INSERT INTO \`${table}\` (${cols}, activo) VALUES (${placeholders}, 1)`,
         values

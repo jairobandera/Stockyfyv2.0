@@ -1,15 +1,21 @@
 import { h } from '../../core/dom.js';
 import { api } from '../../core/api.js';
-import { auth } from '../../core/auth.js';
+import { sucursalActiva, sucursalesDeMiEmpresa } from '../../core/sucursal.js';
+import { sucursalSelect, campoSucursal } from '../../components/sucursalSelect.js';
 import { ui } from '../../core/ui.js';
 import { crudPage } from '../../components/crudPage.js';
 import { activoBadge } from '../../components/badges.js';
 import { exportToExcel, importFromExcel, excelButton } from '../../components/excel.js';
 
 export function gestionarProveedores() {
-  const sucursalId = auth.getSucursalId();
+  // El proveedor es compartido entre sucursales: lo que cambia por sucursal es el
+  // vinculo (sucursal_proveedor). El selector define sobre que sucursal se trabaja.
+  let sucursalId = sucursalActiva();
+  let sucursales = [];
   let current = [];
   let pageRef;
+
+  const selector = sucursalSelect((id) => { sucursalId = id; pageRef.refresh(); });
 
   const importBtn = excelButton('Importar', 'bi-upload', async () => {
     try {
@@ -43,9 +49,10 @@ export function gestionarProveedores() {
   pageRef = crudPage({
     navTitle: 'Proveedores',
     title: 'Proveedores',
-    subtitle: 'Proveedores asociados a tu sucursal.',
+    subtitle: 'Proveedores asociados a la sucursal.',
     entityName: 'proveedor',
     load: async () => {
+      sucursales = await sucursalesDeMiEmpresa();
       const rows = await api.get(`/sucursal-proveedor/sucursal/${sucursalId}`);
       current = rows.map((r) => ({
         id: r.proveedorId, rut: r.proveedorRut, nombre: r.proveedorNombre,
@@ -64,17 +71,23 @@ export function gestionarProveedores() {
       { key: 'activo', label: 'Estado', render: (r) => activoBadge(r.activo) },
     ],
     buildFields: (row) => [
+      // Al crear, la sucursal define a cuál se vincula el proveedor.
+      ...(row ? [] : campoSucursal(sucursales, { help: 'El proveedor queda asociado a esta sucursal.' })),
       { name: 'rut', label: 'RUT', required: true, value: row?.rut, colClass: 'col-md-6' },
       { name: 'nombre', label: 'Nombre', required: true, value: row?.nombre, colClass: 'col-md-6' },
       { name: 'nombreVendedor', label: 'Vendedor', value: row?.nombreVendedor, colClass: 'col-md-6' },
       { name: 'telefono', label: 'Teléfono', value: row?.telefono, colClass: 'col-md-6' },
       { name: 'direccion', label: 'Dirección', value: row?.direccion },
     ],
-    toDto: (v) => ({ rut: v.rut, nombre: v.nombre, direccion: v.direccion, telefono: v.telefono, nombreVendedor: v.nombreVendedor }),
-    create: (dto) => api.post(`/sucursal-proveedor/sucursal/${sucursalId}`, dto),
+    toDto: (v) => ({
+      rut: v.rut, nombre: v.nombre, direccion: v.direccion, telefono: v.telefono,
+      nombreVendedor: v.nombreVendedor,
+      sucursalId: Number(v.sucursalId ?? sucursalId), // solo lo usa el alta
+    }),
+    create: (dto) => api.post(`/sucursal-proveedor/sucursal/${dto.sucursalId}`, dto),
     update: (id, dto) => api.put(`/sucursal-proveedor/proveedor/${id}`, dto),
     remove: (row) => api.put(`/sucursal-proveedor/proveedor/${row.id}/activo/false`),
-    toolbar: h('div', { class: 'd-flex gap-2' }, [importBtn, exportBtn]),
+    toolbar: h('div', { class: 'd-flex flex-wrap gap-2 align-items-center' }, [selector, importBtn, exportBtn]),
   });
   return pageRef;
 }

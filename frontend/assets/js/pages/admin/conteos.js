@@ -1,6 +1,6 @@
 import { h, clear } from '../../core/dom.js';
 import { api } from '../../core/api.js';
-import { auth } from '../../core/auth.js';
+import { sucursalActiva, setSucursalActiva, sucursalesDeMiEmpresa, esMiSucursal } from '../../core/sucursal.js';
 import { ws } from '../../core/ws.js';
 import { ui, fmt } from '../../core/ui.js';
 import { router } from '../../core/router.js';
@@ -14,7 +14,10 @@ import { reabrirConteo } from '../shared/conteoActions.js';
 
 export function gestionarConteos() {
   const content = renderShell('Conteos');
-  const sucursalId = auth.getSucursalId();
+  // Sucursal que se esta mirando: la propia por defecto, pero el admin puede
+  // trabajar sobre cualquier sucursal de su empresa.
+  let sucursalId = sucursalActiva();
+  let sucursales = [];
 
   content.append(pageHeader('Conteos', 'Creá y gestioná los conteos de inventario.', [
     primaryButton('Conteo libre', 'bi-plus-lg', () => crearLibre()),
@@ -23,9 +26,11 @@ export function gestionarConteos() {
       [h('span', { class: 'sk-dot on', id: 'ws-dot' }), 'En vivo']),
   ]));
 
+  const selectorWrap = h('div', { class: 'mb-3' });
   const activosWrap = h('div', { class: 'mb-4' });
   const finalizadosWrap = h('div');
   content.append(
+    selectorWrap,
     h('h5', { class: 'fw-semibold mb-2' }, 'Conteos activos'), activosWrap,
     h('div', { class: 'd-flex flex-wrap justify-content-between align-items-center mb-2 mt-4 gap-2' }, [
       h('h5', { class: 'fw-semibold mb-0' }, 'Conteos finalizados este mes'),
@@ -35,13 +40,31 @@ export function gestionarConteos() {
     finalizadosWrap,
   );
 
+  // Selector de sucursal: solo tiene sentido si la empresa tiene mas de una.
+  async function renderSelector() {
+    sucursales = await sucursalesDeMiEmpresa();
+    if (sucursales.length <= 1) return;
+    clear(selectorWrap);
+    const select = h('select', {
+      class: 'form-select w-auto',
+      onChange: (e) => { sucursalId = Number(e.target.value); setSucursalActiva(sucursalId); refresh(); },
+    }, sucursales.map((s) => h('option', {
+      value: s.id, selected: Number(s.id) === Number(sucursalId),
+    }, esMiSucursal(s.id) ? `${s.nombre} (mi sucursal)` : s.nombre)));
+    selectorWrap.append(h('div', { class: 'd-flex align-items-center gap-2' }, [
+      h('i', { class: 'bi bi-shop text-muted' }),
+      h('label', { class: 'text-muted small mb-0' }, 'Sucursal:'),
+      select,
+    ]));
+  }
+
   async function refresh() {
     clear(activosWrap); clear(finalizadosWrap);
     activosWrap.append(spinner());
     try {
       const [conteos, finalizados] = await Promise.all([
-        api.get('/conteos/all'),
-        api.get(`/conteos/finalizados?desde=${inicioDeMes()}&hasta=${hoyStr()}`),
+        api.get(`/conteos/all?sucursalId=${sucursalId}`),
+        api.get(`/conteos/finalizados?desde=${inicioDeMes()}&hasta=${hoyStr()}&sucursalId=${sucursalId}`),
       ]);
       const activos = conteos.filter((c) => c.activo && !c.conteoFinalizado);
       clear(activosWrap); clear(finalizadosWrap);
@@ -106,31 +129,73 @@ export function gestionarConteos() {
     router.navigate(target);
   }
 
+  /** Campo de sucursal del modal de alta (solo si hay mas de una en la empresa). */
+  function campoSucursal(onChange) {
+    if (sucursales.length <= 1) return [];
+    return [{
+      name: 'sucursalId', label: 'Sucursal donde se cuenta', type: 'select', required: true,
+      value: sucursalId, colClass: 'col-12',
+      options: sucursales.map((s) => ({
+        value: s.id, label: esMiSucursal(s.id) ? `${s.nombre} (mi sucursal)` : s.nombre,
+      })),
+      help: 'Por defecto la tuya. Podés iniciar el conteo en otra sucursal de tu empresa.',
+      onChange,
+    }];
+  }
+
   async function crearLibre() {
-    const ok = await ui.confirm('¿Crear un nuevo conteo libre?', { confirmText: 'Sí, crear', danger: false });
-    if (!ok) return;
+    sucursales = await sucursalesDeMiEmpresa();
+    // Con una sola sucursal no hay nada que elegir: se mantiene la confirmacion simple.
+    let values = { sucursalId };
+    if (sucursales.length > 1) {
+      values = await formModal({
+        title: 'Nuevo conteo libre', submitText: 'Crear conteo', fields: campoSucursal(),
+      });
+    } else {
+      const ok = await ui.confirm('¿Crear un nuevo conteo libre?', { confirmText: 'Sí, crear', danger: false });
+      if (!ok) return;
+    }
+    if (!values) return;
     ui.loading('Creando conteo...');
     try {
       const usuarioId = await resolveUsuarioId();
-      await api.post('/conteos', { tipoConteo: 'LIBRE', usuarioId, fechaHora: now() });
+      await api.post('/conteos', {
+        tipoConteo: 'LIBRE', usuarioId, fechaHora: now(),
+        sucursalId: Number(values.sucursalId ?? sucursalId),
+      });
       ui.close(); ui.success('Conteo libre creado.'); refresh();
     } catch (err) { ui.close(); ui.error(err.message); }
   }
 
   async function crearCategorias() {
-    let categorias;
-    try { categorias = await api.get(`/categorias/sucursal/${sucursalId}`); }
+    sucursales = await sucursalesDeMiEmpresa();
+    const cargarCategorias = async (sucId) => {
+      const cats = await api.get(`/categorias/sucursal/${sucId}`);
+      return cats.map((c) => ({ value: c.id, label: c.nombre }));
+    };
+
+    let opciones;
+    try { opciones = await cargarCategorias(sucursalId); }
     catch (err) { ui.error(err.message); return; }
-    if (categorias.length === 0) { ui.error('No hay categorías en tu sucursal.'); return; }
+    if (opciones.length === 0) { ui.error('Esa sucursal no tiene categorías cargadas.'); return; }
+
+    // Al cambiar la sucursal se repueblan las categorías del checkboxgroup.
+    const onCambioSucursal = async (valor, { setOptions }) => {
+      try { setOptions('categoriaIds', await cargarCategorias(valor)); }
+      catch { setOptions('categoriaIds', []); }
+    };
 
     const values = await formModal({
       title: 'Nuevo conteo por categorías',
       submitText: 'Crear conteo',
-      fields: [{
-        name: 'categoriaIds', label: 'Categorías a contar', type: 'checkboxgroup', required: true,
-        options: categorias.map((c) => ({ value: c.id, label: c.nombre })),
-        help: 'Elegí una o más categorías. Se cargarán todos sus productos activos.',
-      }],
+      fields: [
+        ...campoSucursal(onCambioSucursal),
+        {
+          name: 'categoriaIds', label: 'Categorías a contar', type: 'checkboxgroup', required: true,
+          options: opciones,
+          help: 'Elegí una o más categorías. Se cargarán todos sus productos activos.',
+        },
+      ],
     });
     if (!values) return;
     ui.loading('Creando conteo...');
@@ -138,6 +203,7 @@ export function gestionarConteos() {
       const usuarioId = await resolveUsuarioId();
       await api.post('/conteos/categorias', {
         tipoConteo: 'CATEGORIAS', usuarioId, fechaHora: now(),
+        sucursalId: Number(values.sucursalId ?? sucursalId),
         categoriaIds: values.categoriaIds.map(Number),
       });
       ui.close(); ui.success('Conteo por categorías creado.'); refresh();
@@ -160,9 +226,15 @@ export function gestionarConteos() {
     catch (err) { ui.close(); ui.error(err.message); }
   }
 
+  renderSelector();
   refresh();
-  const u1 = ws.subscribe('conteo-activo', refresh);
-  const u2 = ws.subscribe('conteo-finalizado', refresh);
+  // Los eventos son un broadcast global: se ignoran los de otras sucursales.
+  const siEsDeEstaSucursal = (payload) => {
+    if (payload?.sucursalId && Number(payload.sucursalId) !== Number(sucursalId)) return;
+    refresh();
+  };
+  const u1 = ws.subscribe('conteo-activo', siEsDeEstaSucursal);
+  const u2 = ws.subscribe('conteo-finalizado', siEsDeEstaSucursal);
   const dotTimer = setInterval(() => {
     const d = document.getElementById('ws-dot');
     if (d) d.className = 'sk-dot ' + (ws.isConnected() ? 'on' : 'off');
@@ -170,8 +242,11 @@ export function gestionarConteos() {
   onCleanup(() => { u1(); u2(); clearInterval(dotTimer); });
 }
 
+/** Fecha y hora local en formato MySQL (toISOString() da UTC y adelanta el dia de noche). */
 function now() {
-  return new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const d = new Date();
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 19).replace('T', ' ');
 }
 
 /** Fecha local YYYY-MM-DD (sin desfase de zona horaria). */

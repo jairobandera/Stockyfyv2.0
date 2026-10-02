@@ -9,7 +9,8 @@ import { renderShell } from '../../core/layout.js';
 import { onCleanup } from '../../core/lifecycle.js';
 import { spinner, badge } from '../../components/page.js';
 import { scanBarcode, manualSearch, findByCode, askCantidad, iniciarConteoGuiado } from '../../components/barcode.js';
-import { resolveUsuarioId } from './session.js';
+import { resolveUsuarioId, resolvePerfil } from './session.js';
+import { sucursalesDeMiEmpresa, nombreSucursal, esMiSucursal } from '../../core/sucursal.js';
 
 export async function conteoView({ conteoId, backHref }) {
   conteoId = Number(conteoId);
@@ -18,7 +19,9 @@ export async function conteoView({ conteoId, backHref }) {
   content.append(loading);
 
   const isAdmin = auth.getRole() === 'ADMINISTRADOR';
-  const sucursalId = auth.getSucursalId();
+  // La sucursal sale del CONTEO, no del token: un conteo puede ser de otra sucursal
+  // y el catalogo, el escaneo y el conteo guiado tienen que ser los de esa sucursal.
+  let sucursalId = auth.getSucursalId();
   const productosById = new Map();    // productoId -> producto
   const rowsById = new Map();         // conteoProductoId -> dato
   const rowByProducto = new Map();    // productoId -> conteoProductoId
@@ -35,6 +38,13 @@ export async function conteoView({ conteoId, backHref }) {
     if (conteo.conteoFinalizado || conteo.activo === false) {
       showError('Este conteo ya fue finalizado.');
       return;
+    }
+    if (conteo.sucursalId) {
+      sucursalId = conteo.sucursalId;
+      if (!(await puedeAccederA(sucursalId))) {
+        showError('Este conteo es de otra sucursal y no tenés acceso.');
+        return;
+      }
     }
     // Registrarse como participante (ignorar si ya estaba)
     try { await api.post(`/conteo-usuarios/conteo/${conteoId}/usuario/${usuarioId}`); } catch { /* ya registrado */ }
@@ -78,6 +88,21 @@ export async function conteoView({ conteoId, backHref }) {
     );
   }
 
+  /**
+   * Mismas reglas que el backend (usuario/acceso.js): la sucursal propia siempre;
+   * fuera de ella, el admin llega a toda su empresa y el empleado solo si tiene
+   * habilitado "cuenta en cualquier sucursal".
+   */
+  async function puedeAccederA(sucId) {
+    if (esMiSucursal(sucId)) return true;
+    if (!isAdmin) {
+      const perfil = await resolvePerfil();
+      if (!perfil.cuentaEnCualquierSucursal) return false;
+    }
+    const deMiEmpresa = await sucursalesDeMiEmpresa();
+    return deMiEmpresa.some((s) => Number(s.id) === Number(sucId));
+  }
+
   function showError(msg) {
     loading.remove();
     content.append(h('div', { class: 'sk-card p-5 text-center' }, [
@@ -95,7 +120,15 @@ export async function conteoView({ conteoId, backHref }) {
       h('div', {}, [
         h('button', { class: 'btn btn-sm btn-outline-secondary mb-2', onClick: () => router.navigate(backHref) },
           [h('i', { class: 'bi bi-arrow-left me-1' }), 'Volver']),
-        h('h4', { class: 'mb-0' }, [`Conteo #${conteoId} `, badge(tipoLabel, conteo.tipoConteo === 'CATEGORIAS' ? 'info' : 'primary')]),
+        h('h4', { class: 'mb-0' }, [
+          `Conteo #${conteoId} `,
+          badge(tipoLabel, conteo.tipoConteo === 'CATEGORIAS' ? 'info' : 'primary'),
+          // Se avisa cuando el conteo no es de la sucursal propia.
+          conteo.sucursalId && !esMiSucursal(conteo.sucursalId)
+            ? h('span', { class: 'badge text-bg-warning ms-1' },
+              [h('i', { class: 'bi bi-shop me-1' }), nombreSucursal(conteo.sucursalId)])
+            : null,
+        ]),
         h('div', { class: 'text-muted small' }, `Iniciado: ${fmt.dateTime(conteo.fechaHora)}`),
       ]),
       h('div', { class: 'd-flex align-items-center gap-3' }, [

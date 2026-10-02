@@ -1,6 +1,6 @@
 import { h } from '../../core/dom.js';
 import { api } from '../../core/api.js';
-import { auth } from '../../core/auth.js';
+import { sucursalActiva } from '../../core/sucursal.js';
 import { ui } from '../../core/ui.js';
 import { renderShell } from '../../core/layout.js';
 import { onCleanup } from '../../core/lifecycle.js';
@@ -11,7 +11,7 @@ let charts = [];
 
 export function estadisticas() {
   const content = renderShell('Estadísticas');
-  const sucursalId = auth.getSucursalId();
+  const sucursalId = sucursalActiva();
 
   const hoy = new Date();
   const haceUnMes = new Date(); haceUnMes.setMonth(hoy.getMonth() - 6);

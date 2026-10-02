@@ -6,6 +6,9 @@ import { h } from '../core/dom.js';
  * @param {object} opts
  * @param {string} opts.title
  * @param {Array} opts.fields  [{ name, label, type, options, required, value, help, min, step, colClass }]
+ *   type: text (por defecto) | number | date | password | textarea | select | searchselect |
+ *         multiselect | checkbox | checkboxgroup | tags | image.
+ *   searchselect: como select pero con buscador, para listas largas.
  * @param {string} [opts.submitText]
  * @param {(values)=>string|null} [opts.validate]  Devuelve mensaje de error o null.
  */
@@ -14,10 +17,13 @@ export function formModal({ title, fields, submitText = 'Guardar', validate }) {
     const inputs = {};
     const errorBox = h('div', { class: 'alert alert-danger d-none py-2', role: 'alert' });
 
-    // Permite que un select repueble las opciones de otro (selects en cascada).
+    // Permite que un campo repueble las opciones de otro (campos en cascada).
+    // Funciona con select y con checkboxgroup (por ejemplo: sucursal -> categorias).
     const setOptions = (name, options, selected, placeholder) => {
       const el = inputs[name];
-      if (!el || el.tagName !== 'SELECT') return;
+      if (!el) return;
+      if (el.classList?.contains('sk-checkgroup')) { rebuildCheckgroup(el, options, name); return; }
+      if (el.tagName !== 'SELECT') return;
       el.innerHTML = '';
       if (placeholder !== undefined) el.append(new Option(placeholder, ''));
       for (const o of options || []) {
@@ -95,6 +101,20 @@ function buildField(f, inputs, setOptions) {
     col.append(h('div', { class: 'form-check mt-2' }, [
       input, h('label', { class: 'form-check-label', for: id }, f.label),
     ]));
+    if (f.help) col.append(h('div', { class: 'form-text' }, f.help));
+    return col;
+  }
+
+  // Select con buscador: para listas largas (productos) donde un <select> obliga
+  // a scrollear cientos de opciones. Se escribe parte del nombre y se elige.
+  if (f.type === 'searchselect') {
+    const labelBuscador = h('label', { class: 'form-label', for: `${id}_texto` }, [
+      f.label, f.required ? h('span', { class: 'text-danger' }, ' *') : null,
+    ]);
+    const { wrap, hidden } = buildSearchSelect(f, id);
+    inputs[f.name] = hidden;
+    const help = f.help ? h('div', { class: 'form-text' }, f.help) : null;
+    for (const node of [labelBuscador, wrap, help]) if (node) col.append(node);
     return col;
   }
 
@@ -120,7 +140,7 @@ function buildField(f, inputs, setOptions) {
         h('label', { class: 'form-check-label', for: cbId }, o.label),
       ]);
     });
-    const list = h('div', { class: 'border rounded p-2', style: { maxHeight: '220px', overflowY: 'auto' } }, boxes);
+    const list = h('div', { class: 'border rounded p-2 sk-checkgroup', style: { maxHeight: '220px', overflowY: 'auto' } }, boxes);
 
     // "Seleccionar todas" (solo si hay mas de una opcion)
     let allWrap = null;
@@ -186,11 +206,126 @@ function buildField(f, inputs, setOptions) {
   return col;
 }
 
+const MAX_SUGERENCIAS = 50;
+
+/** Quita acentos y mayusculas para que "cafe" encuentre "CAFÉ". */
+function normalizar(texto) {
+  return String(texto ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+/**
+ * Combobox con buscador. Devuelve { wrap, hidden }: el input oculto guarda el
+ * value de la opcion elegida (vacio mientras no se elija ninguna).
+ */
+function buildSearchSelect(f, id) {
+  const opciones = (f.options || []).map((o) => ({ ...o, busqueda: normalizar(o.label) }));
+  const elegida = opciones.find((o) => String(o.value) === String(f.value ?? ''));
+
+  const hidden = h('input', { type: 'hidden', id, value: elegida ? String(elegida.value) : '' });
+  const texto = h('input', {
+    class: 'form-control', type: 'text', id: `${id}_texto`, autocomplete: 'off',
+    value: elegida ? elegida.label : '',
+    placeholder: f.placeholder || 'Escribí para buscar...',
+  });
+  const lista = h('div', {
+    class: 'list-group position-absolute w-100 shadow d-none',
+    style: { zIndex: '1080', maxHeight: '240px', overflowY: 'auto' },
+  });
+  const wrap = h('div', { class: 'position-relative' }, [texto, hidden, lista]);
+
+  let visibles = [];
+  let marcado = -1;
+
+  const cerrar = () => { lista.classList.add('d-none'); marcado = -1; };
+
+  const elegir = (opcion) => {
+    hidden.value = String(opcion.value);
+    texto.value = opcion.label;
+    cerrar();
+    if (typeof f.onChange === 'function') f.onChange(hidden.value);
+  };
+
+  function pintar() {
+    const term = normalizar(texto.value);
+    // Si lo que hay escrito es exactamente la opcion elegida, se muestran todas.
+    const filtradas = term ? opciones.filter((o) => o.busqueda.includes(term)) : opciones;
+    visibles = filtradas.slice(0, MAX_SUGERENCIAS);
+    lista.innerHTML = '';
+
+    if (visibles.length === 0) {
+      lista.append(h('div', { class: 'list-group-item text-muted small' }, 'Sin resultados'));
+    } else {
+      visibles.forEach((o, i) => {
+        const item = h('button', {
+          type: 'button',
+          class: `list-group-item list-group-item-action py-2${i === marcado ? ' active' : ''}`,
+          // mousedown se dispara antes del blur del input, que cerraria la lista.
+          onMousedown: (e) => { e.preventDefault(); elegir(o); },
+        }, o.label);
+        lista.append(item);
+      });
+      if (filtradas.length > visibles.length) {
+        lista.append(h('div', { class: 'list-group-item text-muted small' },
+          `Se muestran ${visibles.length} de ${filtradas.length}. Seguí escribiendo para afinar.`));
+      }
+    }
+    lista.classList.remove('d-none');
+  }
+
+  texto.addEventListener('input', () => {
+    hidden.value = ''; // mientras no se elija de la lista, no hay seleccion valida
+    marcado = -1;
+    pintar();
+  });
+  texto.addEventListener('focus', () => { marcado = -1; pintar(); });
+  texto.addEventListener('blur', () => {
+    cerrar();
+    // Texto suelto sin seleccion: se limpia para no dejar un nombre que no existe.
+    if (!hidden.value) texto.value = '';
+  });
+  texto.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (lista.classList.contains('d-none')) { pintar(); return; }
+      marcado += e.key === 'ArrowDown' ? 1 : -1;
+      if (marcado < 0) marcado = visibles.length - 1;
+      if (marcado >= visibles.length) marcado = 0;
+      pintar();
+      lista.children[marcado]?.scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const opcion = visibles[marcado >= 0 ? marcado : 0];
+      if (opcion && !lista.classList.contains('d-none')) elegir(opcion);
+    } else if (e.key === 'Escape') {
+      cerrar();
+    }
+  });
+
+  return { wrap, hidden };
+}
+
+/** Repuebla las casillas de un checkboxgroup (se usa desde setOptions). */
+function rebuildCheckgroup(list, options, name) {
+  list.innerHTML = '';
+  if (!options || options.length === 0) {
+    list.append(h('div', { class: 'text-muted small' }, 'Sin opciones disponibles.'));
+    return;
+  }
+  options.forEach((o, i) => {
+    const cbId = `fld_${name}_${i}`;
+    list.append(h('div', { class: 'form-check' }, [
+      h('input', { class: 'form-check-input', type: 'checkbox', id: cbId, value: String(o.value) }),
+      h('label', { class: 'form-check-label', for: cbId }, o.label),
+    ]));
+  });
+}
+
 function collectValues(fields, inputs) {
   const values = {};
   for (const f of fields) {
     const el = inputs[f.name];
     if (f.type === 'checkbox') values[f.name] = el.checked;
+    else if (f.type === 'searchselect') values[f.name] = el.value === '' ? null : el.value;
     else if (f.type === 'number') values[f.name] = el.value === '' ? null : Number(el.value);
     else if (f.type === 'multiselect') values[f.name] = Array.from(el.selectedOptions).map((o) => o.value);
     else if (f.type === 'checkboxgroup') values[f.name] = Array.from(el.querySelectorAll('input[type=checkbox]:checked')).map((cb) => cb.value);

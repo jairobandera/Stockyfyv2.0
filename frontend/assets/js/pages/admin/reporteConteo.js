@@ -13,10 +13,11 @@ export async function reporteConteo({ params }) {
   content.append(loading);
 
   try {
-    const [conteo, renglones, productos, usuarios] = await Promise.all([
-      api.get(`/conteos/${conteoId}`),
+    const conteo = await api.get(`/conteos/${conteoId}`);
+    const [renglones, productos, usuarios] = await Promise.all([
       api.get(`/conteoproducto/conteo/${conteoId}`),
-      api.get('/productos/all'),
+      // Los productos salen de la sucursal DEL CONTEO, no del catalogo global.
+      conteo?.sucursalId ? api.get(`/productos/sucursal/${conteo.sucursalId}`) : api.get('/productos/all'),
       api.get('/usuarios/all'),
     ]);
     const nombreProd = new Map(productos.map((p) => [p.id, p.nombre]));

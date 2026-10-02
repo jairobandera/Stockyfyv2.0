@@ -2,6 +2,7 @@ import { query } from '../../config/db.js';
 import { Router } from '../../core/router.js';
 import { sendJson } from '../../core/http.js';
 import { notFound, conflict } from '../../core/httpError.js';
+import { assertAccesoASucursal } from '../usuario/acceso.js';
 
 export const conteoUsuarioService = {
   async getUsuariosPorConteo(conteoId) {
@@ -22,8 +23,13 @@ export const conteoUsuarioService = {
 
     const user = (await query(`SELECT id, nombre_usuario AS nombreUsuario FROM usuario WHERE id = ? AND activo = 1`, [usuarioId]))[0];
     if (!user) throw notFound(`Usuario no encontrado: ${usuarioId}`);
-    const conteo = (await query(`SELECT id FROM conteo WHERE id = ? AND activo = 1`, [conteoId]))[0];
+    const conteo = (await query(
+      `SELECT id, sucursal_id AS sucursalId FROM conteo WHERE id = ? AND activo = 1`, [conteoId]
+    ))[0];
     if (!conteo) throw notFound(`Conteo no encontrado: ${conteoId}`);
+    // Solo se cuenta en la sucursal propia, salvo admins (toda su empresa) y
+    // empleados con cuenta_en_cualquier_sucursal.
+    if (conteo.sucursalId) await assertAccesoASucursal(usuarioId, conteo.sucursalId);
 
     const res = await query(
       `INSERT INTO conteo_usuario (conteo_id, usuario_id) VALUES (?,?)`, [conteoId, usuarioId]

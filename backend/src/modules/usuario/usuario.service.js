@@ -1,13 +1,19 @@
 import { usuarioRepository } from './usuario.repository.js';
 import { hashPassword } from '../../core/password.js';
-import { notFound } from '../../core/httpError.js';
+import { badRequest, notFound } from '../../core/httpError.js';
 import { toBool } from '../../core/sql.js';
 
 const ROLES = ['EMPLEADO', 'ADMINISTRADOR', 'SUPERADMINISTRADOR'];
 
+function assertRol(rol) {
+  if (rol === null || rol === undefined) return null;
+  if (!ROLES.includes(rol)) throw badRequest(`Rol invalido: ${rol}`);
+  return rol;
+}
+
 function normalizeActivo(row) {
   if (!row) return row;
-  return { ...row, activo: !!row.activo };
+  return { ...row, activo: !!row.activo, cuentaEnCualquierSucursal: !!row.cuentaEnCualquierSucursal };
 }
 
 export const usuarioService = {
@@ -30,8 +36,9 @@ export const usuarioService = {
       apellido: dto.apellido ?? null,
       nombreUsuario: dto.nombreUsuario ?? null,
       contrasenia,
-      rol: dto.rol && ROLES.includes(dto.rol) ? dto.rol : dto.rol ?? null,
+      rol: assertRol(dto.rol),
       sucursalId: dto.sucursalId ?? null,
+      cuentaEnCualquierSucursal: !!dto.cuentaEnCualquierSucursal,
     });
     return normalizeActivo(row);
   },
@@ -42,8 +49,10 @@ export const usuarioService = {
       nombre: dto.nombre ?? undefined,
       apellido: dto.apellido ?? undefined,
       nombre_usuario: dto.nombreUsuario ?? undefined,
-      rol: dto.rol ?? undefined,
+      rol: dto.rol === undefined ? undefined : assertRol(dto.rol),
       sucursal_id: dto.sucursalId ?? undefined,
+      cuenta_en_cualquier_sucursal:
+        dto.cuentaEnCualquierSucursal === undefined ? undefined : toBool(dto.cuentaEnCualquierSucursal),
       activo: dto.activo === undefined || dto.activo === null ? undefined : toBool(dto.activo),
     };
     if (dto.contrasenia) {

@@ -7,6 +7,7 @@ import { renderShell } from '../../core/layout.js';
 import { pageHeader, spinner, badge } from '../../components/page.js';
 import { dataTable } from '../../components/dataTable.js';
 import { reabrirConteo } from '../shared/conteoActions.js';
+import { sucursalActiva, setSucursalActiva, sucursalesDeMiEmpresa, esMiSucursal } from '../../core/sucursal.js';
 
 /** Fecha local en formato YYYY-MM-DD (sin desfase de zona horaria). */
 function hoyStr() {
@@ -25,13 +26,32 @@ export function conteosFinalizados() {
   const hasta = h('input', { class: 'form-control', type: 'date', value: hoy });
   const buscarBtn = h('button', { class: 'btn btn-primary' }, [h('i', { class: 'bi bi-search me-1' }), 'Buscar']);
 
+  // Sucursal a consultar: arranca en la activa y queda compartida con la pagina de conteos.
+  let sucursalId = sucursalActiva();
+  const sucursalCol = h('div', { class: 'col-sm-4 col-md-3 d-none' });
+
   const filtros = h('div', { class: 'sk-card p-3 mb-3' }, [
     h('div', { class: 'row g-2 align-items-end' }, [
+      sucursalCol,
       h('div', { class: 'col-sm-4 col-md-3' }, [h('label', { class: 'form-label small mb-1' }, 'Desde'), desde]),
       h('div', { class: 'col-sm-4 col-md-3' }, [h('label', { class: 'form-label small mb-1' }, 'Hasta'), hasta]),
       h('div', { class: 'col-sm-4 col-md-3' }, [buscarBtn]),
     ]),
   ]);
+
+  // El selector solo aparece si la empresa tiene mas de una sucursal.
+  (async () => {
+    const sucursales = await sucursalesDeMiEmpresa();
+    if (sucursales.length <= 1) return;
+    const select = h('select', {
+      class: 'form-select',
+      onChange: (e) => { sucursalId = Number(e.target.value); setSucursalActiva(sucursalId); buscar(); },
+    }, sucursales.map((s) => h('option', {
+      value: s.id, selected: Number(s.id) === Number(sucursalId),
+    }, esMiSucursal(s.id) ? `${s.nombre} (mi sucursal)` : s.nombre)));
+    sucursalCol.classList.remove('d-none');
+    sucursalCol.append(h('label', { class: 'form-label small mb-1' }, 'Sucursal'), select);
+  })();
 
   const resultWrap = h('div');
   content.append(filtros, resultWrap);
@@ -54,7 +74,7 @@ export function conteosFinalizados() {
     clear(resultWrap);
     resultWrap.append(spinner('Buscando...'));
     try {
-      const q = new URLSearchParams({ desde: desde.value, hasta: hasta.value }).toString();
+      const q = new URLSearchParams({ desde: desde.value, hasta: hasta.value, sucursalId }).toString();
       const rows = await api.get(`/conteos/finalizados?${q}`);
       clear(resultWrap);
       resultWrap.append(

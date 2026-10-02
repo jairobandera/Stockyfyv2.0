@@ -8,6 +8,13 @@ class Router {
     this.current = null;
   }
 
+  /**
+   * @param {string} pattern            "/admin/gestionar-lotes" o "/admin/editar/:id"
+   * @param {Function} handler
+   * @param {object} [options]
+   * @param {string} [options.role]     Rol requerido.
+   * @param {()=>boolean} [options.requiere]  Condicion extra (apartados opcionales).
+   */
   add(pattern, handler, options = {}) {
     const segments = pattern.split('/').filter(Boolean).map((s) =>
       s.startsWith(':') ? { param: s.slice(1) } : { literal: s });
@@ -46,6 +53,11 @@ class Router {
       if (role) {
         if (!auth.isAuthenticated() || auth.isExpired()) { this.navigate('/login'); return; }
         if (auth.getRole() !== role) { this.navigate(auth.homeRoute().replace('#', '')); return; }
+      }
+      // Guarda de apartado opcional (por ejemplo Lotes, que se habilita por sucursal).
+      if (typeof route.options.requiere === 'function' && !route.options.requiere()) {
+        this.navigate(auth.homeRoute().replace('#', ''));
+        return;
       }
       this.current = { params, query, pattern: route.pattern };
       route.handler({ params, query });

@@ -2,6 +2,7 @@
 import { router } from './core/router.js';
 import { auth } from './core/auth.js';
 import { runCleanups } from './core/lifecycle.js';
+import { cargarSucursal, usaLotes } from './core/sucursal.js';
 import { ui } from './core/ui.js';
 
 import { loginPage } from './pages/login.js';
@@ -62,7 +63,8 @@ router.add('/admin/dashboard', page(adminDashboard), { role: AD });
 router.add('/admin/gestionar-categorias', page(gestionarCategorias), { role: AD });
 router.add('/admin/gestionar-productos', page(gestionarProductos), { role: AD });
 router.add('/admin/plantillas', page(gestionarPlantillas), { role: AD });
-router.add('/admin/gestionar-lotes', page(gestionarLotes), { role: AD });
+// El apartado de Lotes se habilita por sucursal desde el panel de superadmin.
+router.add('/admin/gestionar-lotes', page(gestionarLotes), { role: AD, requiere: usaLotes });
 router.add('/admin/gestionar-proveedores', page(gestionarProveedores), { role: AD });
 router.add('/admin/gestionar-empleados', page(gestionarEmpleados), { role: AD });
 router.add('/admin/gestionar-conteos', page(gestionarConteos), { role: AD });
@@ -87,4 +89,7 @@ router.setNotFound(() => {
   else router.navigate('/login');
 });
 
-router.start();
+// La config de la sucursal define que apartados opcionales estan habilitados
+// (hoy, Lotes), asi que se carga antes de resolver la primera ruta.
+if (auth.isAuthenticated() && !auth.isExpired()) cargarSucursal().finally(() => router.start());
+else router.start();

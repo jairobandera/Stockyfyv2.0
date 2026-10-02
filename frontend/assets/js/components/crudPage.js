@@ -23,6 +23,9 @@ import { ui } from '../core/ui.js';
  * @param {(values)=>string|null} [cfg.validate]
  * @param {Array} [cfg.extraActions]      Acciones extra por fila.
  * @param {Node|Array} [cfg.toolbar]      Controles extra en la barra.
+ * @param {(row)=>string} [cfg.rowClass]  Clase CSS por fila (para resaltar).
+ * @param {Node|Array} [cfg.footer]       Secciones extra debajo de la tabla.
+ * @param {(rows)=>void} [cfg.afterRefresh]  Se ejecuta al terminar cada recarga.
  * @param {object} [cfg.openEditId]       Si se pasa, abre edicion de ese id al cargar.
  */
 export function crudPage(cfg) {
@@ -33,6 +36,7 @@ export function crudPage(cfg) {
   content.append(header);
   const tableWrap = h('div');
   content.append(tableWrap);
+  if (cfg.footer) content.append(h('div', {}, cfg.footer));
 
   let rows = [];
 
@@ -53,13 +57,14 @@ export function crudPage(cfg) {
       });
       tableWrap.append(dataTable({
         columns: cfg.columns, rows, actions,
-        searchKeys: cfg.searchKeys, toolbar: cfg.toolbar,
+        searchKeys: cfg.searchKeys, toolbar: cfg.toolbar, rowClass: cfg.rowClass,
         searchPlaceholder: `Buscar ${cfg.entityName}...`,
       }));
     } catch (err) {
       clear(tableWrap);
       tableWrap.append(h('div', { class: 'alert alert-danger' }, `Error al cargar: ${err.message}`));
     }
+    if (cfg.afterRefresh) cfg.afterRefresh(rows);
   }
 
   async function openForm(row = null) {

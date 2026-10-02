@@ -40,6 +40,9 @@ CREATE TABLE sucursal (
   telefono   VARCHAR(255),
   empresa_id BIGINT,
   activo     BOOLEAN NOT NULL DEFAULT TRUE,
+  -- Habilita el apartado de Lotes para los administradores de esta sucursal.
+  -- Si esta en 0, el menu queda deshabilitado y la API de lotes rechaza la sucursal.
+  usa_lotes  BOOLEAN NOT NULL DEFAULT TRUE,
   CONSTRAINT fk_sucursal_empresa FOREIGN KEY (empresa_id) REFERENCES empresa(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -52,6 +55,8 @@ CREATE TABLE usuario (
   contrasenia    VARCHAR(255),
   rol            VARCHAR(30),
   sucursal_id    BIGINT,
+  -- Permite participar en conteos de otras sucursales de su misma empresa.
+  cuenta_en_cualquier_sucursal BOOLEAN NOT NULL DEFAULT FALSE,
   activo         BOOLEAN NOT NULL DEFAULT TRUE,
   CONSTRAINT fk_usuario_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursal(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -90,6 +95,8 @@ CREATE TABLE producto (
   activo          BOOLEAN NOT NULL DEFAULT TRUE,
   sucursal_id     BIGINT NOT NULL,
   categoria_id    BIGINT NOT NULL,
+  -- El codigo de producto es unico dentro de la sucursal, no entre sucursales.
+  CONSTRAINT uk_producto_codigo_sucursal UNIQUE (codigo_producto, sucursal_id),
   CONSTRAINT fk_producto_sucursal  FOREIGN KEY (sucursal_id)  REFERENCES sucursal(id),
   CONSTRAINT fk_producto_categoria FOREIGN KEY (categoria_id) REFERENCES categoria(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -97,20 +104,35 @@ CREATE TABLE producto (
 -- ---------------- CODIGO_BARRA ----------------
 CREATE TABLE codigo_barra (
   id          BIGINT AUTO_INCREMENT PRIMARY KEY,
-  codigo      VARCHAR(255) NOT NULL UNIQUE,
+  codigo      VARCHAR(255) NOT NULL,
   producto_id BIGINT NOT NULL,
-  CONSTRAINT fk_codigobarra_producto FOREIGN KEY (producto_id) REFERENCES producto(id) ON DELETE CASCADE
+  -- Desnormalizado desde producto: MySQL no acepta un UNIQUE sobre una columna de
+  -- otra tabla y el mismo EAN debe poder existir una vez por sucursal.
+  -- Lo mantiene sincronizado syncCodigosBarra() en producto.service.js.
+  sucursal_id BIGINT NOT NULL,
+  -- Baja logica: un codigo nunca se borra. Las importaciones solo suman; solo la
+  -- accion explicita del usuario desactiva uno (y deja de escanear, pero queda).
+  activo      BOOLEAN NOT NULL DEFAULT TRUE,
+  CONSTRAINT uk_codigobarra_sucursal UNIQUE (codigo, sucursal_id),
+  CONSTRAINT fk_codigobarra_producto FOREIGN KEY (producto_id) REFERENCES producto(id) ON DELETE CASCADE,
+  CONSTRAINT fk_codigobarra_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursal(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------- LOTE ----------------
 CREATE TABLE lote (
   id                BIGINT AUTO_INCREMENT PRIMARY KEY,
-  numero_lote       VARCHAR(255) NOT NULL UNIQUE,
+  numero_lote       VARCHAR(255) NOT NULL,
   fecha_ingreso     DATE NOT NULL,
   fecha_vencimiento DATE,
   cantidad_stock    INT NOT NULL,
   activo            BOOLEAN NOT NULL DEFAULT TRUE,
+  -- Indica si este lote sumo su cantidad al stock del producto (mercaderia nueva).
+  -- Si es 0 el lote solo etiqueta stock que ya estaba contado (por ejemplo el del Excel).
+  afecta_stock      BOOLEAN NOT NULL DEFAULT FALSE,
   producto_id       BIGINT NOT NULL,
+  -- El numero de lote lo asigna el proveedor: se repite entre productos, no dentro del mismo.
+  CONSTRAINT uk_lote_numero_producto UNIQUE (numero_lote, producto_id),
+  INDEX idx_lote_vencimiento (fecha_vencimiento),
   CONSTRAINT fk_lote_producto FOREIGN KEY (producto_id) REFERENCES producto(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -138,9 +160,14 @@ CREATE TABLE conteo (
   fecha_hora        DATETIME,
   conteo_finalizado BOOLEAN NOT NULL DEFAULT FALSE,
   usuario_id        BIGINT,
+  -- Sucursal en la que se cuenta. La elige el admin al crear el conteo (por defecto
+  -- la suya) y de ella salen las categorias, los productos y el catalogo de escaneo.
+  sucursal_id       BIGINT,
   activo            BOOLEAN NOT NULL DEFAULT TRUE,
   tipo_conteo       VARCHAR(20) NOT NULL DEFAULT 'LIBRE',
-  CONSTRAINT fk_conteo_usuario FOREIGN KEY (usuario_id) REFERENCES usuario(id)
+  INDEX idx_conteo_sucursal (sucursal_id, activo),
+  CONSTRAINT fk_conteo_usuario  FOREIGN KEY (usuario_id)  REFERENCES usuario(id),
+  CONSTRAINT fk_conteo_sucursal FOREIGN KEY (sucursal_id) REFERENCES sucursal(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------- CONTEO_PRODUCTO (renglones del conteo) ----------------

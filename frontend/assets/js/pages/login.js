@@ -3,6 +3,7 @@ import { auth } from '../core/auth.js';
 import { router } from '../core/router.js';
 import { ui } from '../core/ui.js';
 import { resetShell } from '../core/layout.js';
+import { cargarSucursal, limpiarSucursal } from '../core/sucursal.js';
 
 export function loginPage() {
   resetShell();
@@ -14,6 +15,8 @@ export function loginPage() {
     router.navigate(auth.homeRoute().replace('#', ''));
     return;
   }
+  // Se llega aca tambien al cerrar sesion: la config de la sucursal es de ese usuario.
+  limpiarSucursal();
 
   const userInput = h('input', { class: 'form-control', id: 'login-user', placeholder: 'Nombre de usuario', autofocus: true });
   const passInput = h('input', { class: 'form-control', id: 'login-pass', type: 'password', placeholder: 'Contraseña' });
@@ -34,6 +37,7 @@ export function loginPage() {
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Ingresando...';
     try {
       await auth.login(nombreUsuario, contrasenia);
+      await cargarSucursal();
       resetShell();
       router.navigate(auth.homeRoute().replace('#', ''));
     } catch (err) {

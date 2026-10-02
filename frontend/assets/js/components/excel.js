@@ -68,16 +68,63 @@ export function normalizeHeader(value) {
 export function matchColumns(headerRow, aliasMap) {
   const normalized = (headerRow || []).map(normalizeHeader);
   const result = {};
+  const tomadas = new Set();
+  // Primera pasada: coincidencias EXACTAS. Van antes que las aproximadas para que
+  // "codigo_producto" no se quede con la columna "codigo_de_barras" por contener
+  // la palabra "codigo" (eso dejaba el mapa indexado por EAN y perdia todo).
   for (const [field, aliases] of Object.entries(aliasMap)) {
     const wanted = aliases.map(normalizeHeader);
-    // Coincidencia exacta primero; si no, coincidencia por "contiene".
-    let idx = normalized.findIndex((hdr) => hdr && wanted.includes(hdr));
-    if (idx === -1) {
-      idx = normalized.findIndex((hdr) => hdr && wanted.some((w) => hdr.includes(w) || w.includes(hdr)));
-    }
-    if (idx !== -1) result[field] = idx;
+    const idx = normalized.findIndex((hdr, i) => hdr && !tomadas.has(i) && wanted.includes(hdr));
+    if (idx !== -1) { result[field] = idx; tomadas.add(idx); }
+  }
+  // Segunda pasada: coincidencia por "contiene", sin reusar columnas ya asignadas.
+  for (const [field, aliases] of Object.entries(aliasMap)) {
+    if (result[field] !== undefined) continue;
+    const wanted = aliases.map(normalizeHeader);
+    const idx = normalized.findIndex((hdr, i) =>
+      hdr && !tomadas.has(i) && wanted.some((w) => hdr.includes(w) || w.includes(hdr)));
+    if (idx !== -1) { result[field] = idx; tomadas.add(idx); }
   }
   return result;
+}
+
+/**
+ * Como matchColumns pero devuelve TODAS las columnas que matchean cada campo.
+ * Hace falta para los codigos de barra: un archivo puede traer EAN1, EAN2, EAN3...
+ * y quedarse solo con la primera es perder codigos sin avisar.
+ * @returns {Object<string, number[]>} { campo: [indices...] }
+ */
+export function matchColumnsMulti(headerRow, aliasMap) {
+  const normalized = (headerRow || []).map(normalizeHeader);
+  const exactos = matchColumns(headerRow, aliasMap);
+  const result = {};
+  for (const [field, aliases] of Object.entries(aliasMap)) {
+    const wanted = aliases.map(normalizeHeader);
+    const indices = new Set();
+    if (exactos[field] !== undefined) indices.add(exactos[field]);
+    normalized.forEach((hdr, i) => {
+      if (!hdr) return;
+      // Solo se suman columnas que matchean EXACTO o que empiezan con un alias
+      // ("ean2", "codigobarra3"): evita arrastrar columnas de otro campo.
+      if (wanted.includes(hdr) || wanted.some((w) => w && hdr.startsWith(w))) indices.add(i);
+    });
+    // No se roban las columnas que otro campo ya tomo en exclusiva.
+    for (const [otro, idx] of Object.entries(exactos)) {
+      if (otro !== field) indices.delete(idx);
+    }
+    if (indices.size) result[field] = [...indices].sort((a, b) => a - b);
+  }
+  return result;
+}
+
+/**
+ * Clave para cruzar codigos de producto entre un Excel y la base.
+ * Los codigos tienen ceros a la izquierda ("002187944") y Excel los puede traer
+ * como numero (2187944), con lo que la comparacion exacta no encuentra nada.
+ */
+export function claveCodigo(valor) {
+  const texto = String(valor ?? '').trim().toUpperCase();
+  return texto.replace(/^0+(?=.)/, '');
 }
 
 /**

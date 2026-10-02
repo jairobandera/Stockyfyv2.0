@@ -6,6 +6,9 @@ import { renderShell } from '../../core/layout.js';
 import { onCleanup } from '../../core/lifecycle.js';
 import { pageHeader, spinner, badge } from '../../components/page.js';
 import { fmt } from '../../core/ui.js';
+import { auth } from '../../core/auth.js';
+import { resolvePerfil } from '../shared/session.js';
+import { sucursalesDeMiEmpresa, esMiSucursal, nombreSucursal } from '../../core/sucursal.js';
 
 export async function empleadoDashboard() {
   const content = renderShell('Dashboard');
@@ -18,12 +21,25 @@ export async function empleadoDashboard() {
   const listWrap = h('div', { class: 'row g-3' });
   content.append(listWrap);
 
+  /**
+   * Conteos a los que este empleado puede entrar: los de su sucursal y, si el
+   * superadmin le habilitó "cuenta en cualquier sucursal", los del resto de su empresa.
+   */
+  async function conteosVisibles() {
+    const mia = auth.getSucursalId();
+    const perfil = await resolvePerfil().catch(() => null);
+    if (!perfil?.cuentaEnCualquierSucursal) return api.get(`/conteos?sucursalId=${mia}`);
+    const sucursales = await sucursalesDeMiEmpresa();
+    const listas = await Promise.all(sucursales.map((s) => api.get(`/conteos?sucursalId=${s.id}`)));
+    return listas.flat();
+  }
+
   async function load() {
     clear(listWrap);
     const loading = spinner('Cargando conteos...');
     listWrap.append(loading);
     try {
-      const conteos = await api.get('/conteos');
+      const conteos = await conteosVisibles();
       clear(listWrap);
       if (conteos.length === 0) {
         listWrap.append(h('div', { class: 'col-12' }, [
@@ -56,6 +72,12 @@ export async function empleadoDashboard() {
           badge(tipo, c.tipoConteo === 'CATEGORIAS' ? 'info' : 'primary'),
         ]),
         h('h5', { class: 'mt-3 mb-1' }, `Conteo #${c.id}`),
+        // Si es de otra sucursal se aclara cual, para no confundir conteos parecidos.
+        c.sucursalId && !esMiSucursal(c.sucursalId)
+          ? h('div', { class: 'mb-1' },
+            [h('span', { class: 'badge text-bg-warning' },
+              [h('i', { class: 'bi bi-shop me-1' }), nombreSucursal(c.sucursalId)])])
+          : null,
         h('p', { class: 'text-muted small mb-0' }, `Iniciado: ${fmt.dateTime(c.fechaHora)}`),
       ]),
     ]);

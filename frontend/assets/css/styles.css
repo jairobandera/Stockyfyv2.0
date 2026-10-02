@@ -72,6 +72,18 @@ body {
 }
 .sk-nav a:hover { background: var(--sk-sidebar-hover); color: #fff; }
 .sk-nav a.active { background: var(--sk-sidebar-hover); color: #fff; border-left-color: #60a5fa; }
+/* Apartado no habilitado para la sucursal: visible pero inerte. */
+.sk-nav .sk-nav-disabled {
+  display: flex; align-items: center; gap: .7rem;
+  padding: .7rem 1.25rem;
+  color: #475569;
+  font-size: .95rem;
+  border-left: 3px solid transparent;
+  cursor: not-allowed;
+  opacity: .55;
+  user-select: none;
+}
+.sk-nav .sk-nav-disabled .bi-lock-fill { font-size: .75rem; }
 .sk-nav .sk-nav-section {
   padding: .6rem 1.25rem .3rem;
   font-size: .72rem;
@@ -123,6 +135,11 @@ body {
   transition: transform .15s, box-shadow .15s;
 }
 .sk-dash-card:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(0,0,0,.1); }
+/* Acceso rapido a un apartado no habilitado: gris y sin interaccion. */
+.sk-dash-card.sk-disabled {
+  cursor: not-allowed; opacity: .5; filter: grayscale(1); background: #f1f5f9;
+}
+.sk-dash-card.sk-disabled:hover { transform: none; box-shadow: var(--sk-card-shadow, none); }
 
 /* ---------- Tabla ---------- */
 .sk-table-toolbar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-bottom: 1rem; }

@@ -1,3 +1,4 @@
+import { h } from '../../core/dom.js';
 import { api } from '../../core/api.js';
 import { crudPage } from '../../components/crudPage.js';
 import { activoBadge } from '../../components/badges.js';
@@ -25,6 +26,13 @@ function config(extra = {}) {
       { key: 'empresaNombre', label: 'Empresa' },
       { key: 'direccion', label: 'Dirección' },
       { key: 'telefono', label: 'Teléfono' },
+      {
+        key: 'usaLotes',
+        label: 'Lotes',
+        render: (r) => (r.usaLotes
+          ? h('span', { class: 'badge text-bg-primary' }, 'Habilitado')
+          : h('span', { class: 'badge text-bg-light text-dark' }, 'No usa')),
+      },
       { key: 'activo', label: 'Estado', render: (r) => activoBadge(r.activo) },
     ],
     buildFields: async (row) => [
@@ -32,9 +40,15 @@ function config(extra = {}) {
       { name: 'empresaId', label: 'Empresa', type: 'select', required: true, value: row?.empresaId, options: await empresaOptions(), placeholder: 'Seleccionar empresa', colClass: 'col-md-6' },
       { name: 'direccion', label: 'Dirección', value: row?.direccion, colClass: 'col-md-6' },
       { name: 'telefono', label: 'Teléfono', value: row?.telefono, colClass: 'col-md-6' },
+      {
+        name: 'usaLotes', label: 'Usa apartado de Lotes', type: 'checkbox',
+        value: row ? row.usaLotes : false, colClass: 'col-12',
+        help: 'Si está marcado, los administradores de esta sucursal ven y usan la sección '
+          + 'de Lotes (vencimientos y stock por lote). Si no, les queda deshabilitada.',
+      },
       ...(row ? [{ name: 'activo', label: 'Activo', type: 'checkbox', value: row.activo }] : []),
     ],
-    toDto: (v) => ({ nombre: v.nombre, empresaId: Number(v.empresaId), direccion: v.direccion, telefono: v.telefono, activo: v.activo }),
+    toDto: (v) => ({ nombre: v.nombre, empresaId: Number(v.empresaId), direccion: v.direccion, telefono: v.telefono, usaLotes: !!v.usaLotes, activo: v.activo }),
     create: (dto) => api.post('/sucursales', dto),
     update: (id, dto) => api.put(`/sucursales/${id}`, dto),
     remove: (row) => api.del(`/sucursales/${row.id}`),

@@ -9,7 +9,18 @@ export function statCard(label, value, icon, color) {
   ]);
 }
 
-export function quickCard(label, icon, href) {
+/**
+ * @param {object} [opts]
+ * @param {boolean} [opts.disabled]  Apartado no habilitado: gris y sin click.
+ * @param {string}  [opts.title]     Tooltip (para explicar por que esta deshabilitado).
+ */
+export function quickCard(label, icon, href, opts = {}) {
+  if (opts.disabled) {
+    return h('div', { class: 'sk-card sk-dash-card sk-disabled p-4 text-center h-100', title: opts.title || '' }, [
+      h('i', { class: `bi ${icon}`, style: { fontSize: '2rem', color: '#94a3b8' } }),
+      h('div', { class: 'mt-2 fw-semibold text-muted' }, [label, ' ', h('i', { class: 'bi bi-lock-fill small' })]),
+    ]);
+  }
   return h('div', {
     class: 'sk-card sk-dash-card p-4 text-center h-100',
     onClick: () => router.navigate(href),

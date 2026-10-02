@@ -1,6 +1,7 @@
 // Renderiza el "shell" de la aplicacion (sidebar + topbar) y provee el area de contenido.
 import { h, clear } from './dom.js';
 import { auth } from './auth.js';
+import { usaLotes } from './sucursal.js';
 
 const NAV = {
   SUPERADMINISTRADOR: [
@@ -22,7 +23,7 @@ const NAV = {
     { section: 'Inventario' },
     { icon: 'bi-tags', label: 'Categorias', href: '#/admin/gestionar-categorias' },
     { icon: 'bi-box-seam', label: 'Productos', href: '#/admin/gestionar-productos' },
-    { icon: 'bi-boxes', label: 'Lotes', href: '#/admin/gestionar-lotes' },
+    { icon: 'bi-boxes', label: 'Lotes', href: '#/admin/gestionar-lotes', requiere: usaLotes },
     { icon: 'bi-truck', label: 'Proveedores', href: '#/admin/gestionar-proveedores' },
     { icon: 'bi-file-earmark-arrow-down', label: 'Plantillas', href: '#/admin/plantillas' },
     { section: 'Operacion' },
@@ -80,6 +81,13 @@ export function resetShell() {
 function buildSidebar(role) {
   const items = (NAV[role] || []).map((item) => {
     if (item.section) return h('div', { class: 'sk-nav-section' }, item.section);
+    // Apartado opcional deshabilitado para esta sucursal: se muestra en gris y sin enlace.
+    if (item.requiere && !item.requiere()) {
+      return h('span', {
+        class: 'sk-nav-disabled',
+        title: 'Apartado no habilitado para esta sucursal. Lo activa el superadministrador.',
+      }, [h('i', { class: `bi ${item.icon}` }), item.label, h('i', { class: 'bi bi-lock-fill ms-auto' })]);
+    }
     return h('a', { href: item.href, dataset: { href: item.href }, onClick: closeSidebar }, [
       h('i', { class: `bi ${item.icon}` }), item.label,
     ]);
